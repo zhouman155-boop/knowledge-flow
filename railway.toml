@@ -1,0 +1,11 @@
+[build]
+builder = "DOCKERFILE"
+
+[deploy]
+startCommand = "python mcp_server.py"
+healthcheckPath = "/view"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+
+[[volumes]]
+mountPath = "/data"
