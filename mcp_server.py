@@ -171,9 +171,6 @@ def _render_view_page(stats: dict, tree_html: str) -> str:
     background: #fff;
     border-bottom: 2px solid #e8ede3;
     padding: 16px 18px 13px;
-    display: flex;
-    align-items: baseline;
-    gap: 12px;
   }}
   header h1 {{
     font-size: 1.15rem;
@@ -182,8 +179,10 @@ def _render_view_page(stats: dict, tree_html: str) -> str:
     letter-spacing: .4px;
   }}
   header p {{
-    font-size: .78rem;
-    color: #a8b8a0;
+    margin-top: 3px;
+    font-size: .75rem;
+    color: #b0bfa8;
+    letter-spacing: .1px;
   }}
 
   /* ── 统计卡片（一行四列）─────────────── */
@@ -410,7 +409,7 @@ def _render_view_page(stats: dict, tree_html: str) -> str:
 
 <header>
   <h1>KnowledgeFlow</h1>
-  <p>把你刷到的内容，慢慢变成自己的知识</p>
+  <p>让你刷到的碎片信息，自己长成知识图谱</p>
 </header>
 
 <div class="stats">
