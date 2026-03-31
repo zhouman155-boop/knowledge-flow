@@ -4,43 +4,42 @@ from datetime import datetime
 from contextlib import contextmanager
 
 # Railway 部署时设置 DATA_DIR=/data（挂载持久磁盘）
-# 本地运行时默认使用项目内 data/ 目录
 DATA_DIR = os.getenv("DATA_DIR", os.path.join(os.path.dirname(__file__), "data"))
 DB_PATH = os.path.join(DATA_DIR, "knowledge_base.db")
 
+# ── v2 表结构 ────────────────────────────────────────────────────────
+# kb_entries: 每篇文章 × 每个 topic/dimension 一行
+# kb_points:  每个条目的要点，通过 entry_id 关联（CASCADE 删除）
 _DDL = """
-CREATE TABLE IF NOT EXISTS points (
-    topic     TEXT NOT NULL,
-    dimension TEXT NOT NULL,
-    point     TEXT NOT NULL,
-    PRIMARY KEY (topic, dimension, point)
+PRAGMA foreign_keys = ON;
+
+CREATE TABLE IF NOT EXISTS kb_entries (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    url         TEXT    NOT NULL DEFAULT '',
+    title       TEXT    NOT NULL DEFAULT '',
+    platform    TEXT    NOT NULL DEFAULT '',
+    summary     TEXT    NOT NULL DEFAULT '',
+    topic       TEXT    NOT NULL,
+    dimension   TEXT    NOT NULL,
+    created_at  TEXT    NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS sources (
-    id        INTEGER PRIMARY KEY AUTOINCREMENT,
-    topic     TEXT NOT NULL,
-    dimension TEXT NOT NULL,
-    title     TEXT DEFAULT '',
-    url       TEXT DEFAULT '',
-    platform  TEXT DEFAULT '',
-    summary   TEXT DEFAULT '',
-    created_at TEXT NOT NULL
+CREATE TABLE IF NOT EXISTS kb_points (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    entry_id    INTEGER NOT NULL REFERENCES kb_entries(id) ON DELETE CASCADE,
+    point       TEXT    NOT NULL
 );
 """
 
 
-def _init():
+@contextmanager
+def _conn():
     os.makedirs(DATA_DIR, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(_DDL)
-    conn.commit()
-    return conn
-
-
-@contextmanager
-def _conn():
-    conn = _init()
+    _migrate_v1(conn)
     try:
         yield conn
         conn.commit()
@@ -48,101 +47,164 @@ def _conn():
         conn.close()
 
 
+def _migrate_v1(conn: sqlite3.Connection):
+    """
+    将旧版 sources + points 表的数据迁移到 v2 表，只执行一次。
+    迁移完成后旧表保留（只读备份），不再使用。
+    """
+    tables = {r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+    ).fetchall()}
+
+    if "sources" not in tables:
+        return  # 没有旧数据，无需迁移
+
+    already_migrated = conn.execute("SELECT COUNT(*) FROM kb_entries").fetchone()[0]
+    if already_migrated > 0:
+        return  # 已迁移，跳过
+
+    old_sources = conn.execute(
+        "SELECT topic, dimension, title, url, platform, summary, created_at FROM sources"
+    ).fetchall()
+    if not old_sources:
+        return
+
+    old_points = conn.execute("SELECT topic, dimension, point FROM points").fetchall()
+    pts_by_td: dict = {}
+    for p in old_points:
+        key = (p["topic"], p["dimension"])
+        pts_by_td.setdefault(key, []).append(p["point"])
+
+    for s in old_sources:
+        cursor = conn.execute(
+            "INSERT INTO kb_entries (url, title, platform, summary, topic, dimension, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (s["url"], s["title"], s["platform"], s["summary"],
+             s["topic"], s["dimension"], s["created_at"]),
+        )
+        entry_id = cursor.lastrowid
+        td_key = (s["topic"], s["dimension"])
+        for point in pts_by_td.pop(td_key, []):
+            conn.execute(
+                "INSERT INTO kb_points (entry_id, point) VALUES (?, ?)",
+                (entry_id, point),
+            )
+    conn.commit()
+
+
+def _to_entries_list(extracted: dict) -> list[dict]:
+    """统一将 AI 返回的新/旧格式都转换为 entries 列表。"""
+    if "entries" in extracted:
+        return extracted["entries"]
+    # 兼容旧格式（单条 topic/dimension）
+    return [{
+        "topic": extracted.get("topic", "未分类"),
+        "dimension": extracted.get("dimension", "通用"),
+        "key_points": extracted.get("key_points", []),
+    }]
+
+
 def add_knowledge(extracted: dict, source_info: dict) -> dict:
     """
-    将 AI 提取结果合并进知识库。
-    接口与原 JSON 版本完全兼容。
+    保存 AI 提取结果到知识库。
+    支持新格式（含 entries 数组）和旧格式（单条）。
+    同一 URL 重复提交时，自动覆盖旧数据。
     """
-    topic = extracted.get("topic", "未分类")
-    dimension = extracted.get("dimension", "通用")
-    key_points = extracted.get("key_points", [])
-    summary = extracted.get("summary", "")
+    url = (source_info.get("url") or "").strip()
+    title = source_info.get("title") or "未知标题"
+    platform = source_info.get("platform") or ""
+    summary = extracted.get("summary") or ""
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
 
+    entries = _to_entries_list(extracted)
+
     with _conn() as conn:
-        existing_topics = {r[0] for r in conn.execute("SELECT DISTINCT topic FROM points")}
-        existing_dims = {
-            r[0] for r in conn.execute(
-                "SELECT DISTINCT dimension FROM points WHERE topic=?", (topic,)
-            )
-        }
+        is_update = False
+        if url:
+            old = conn.execute(
+                "SELECT COUNT(*) FROM kb_entries WHERE url = ?", (url,)
+            ).fetchone()[0]
+            if old > 0:
+                # 删除旧条目（kb_points 通过 CASCADE 一起删）
+                conn.execute("DELETE FROM kb_entries WHERE url = ?", (url,))
+                is_update = True
 
-        # 写入来源记录
-        conn.execute(
-            "INSERT INTO sources (topic, dimension, title, url, platform, summary, created_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (
-                topic, dimension,
-                source_info.get("title", ""),
-                source_info.get("url", ""),
-                source_info.get("platform", ""),
-                summary, now,
-            ),
-        )
+        for entry in entries:
+            topic = entry.get("topic") or "未分类"
+            dimension = entry.get("dimension") or "通用"
+            key_points = entry.get("key_points") or []
 
-        # 合并要点（IGNORE 处理去重）
-        new_points = []
-        for point in key_points:
             cursor = conn.execute(
-                "INSERT OR IGNORE INTO points (topic, dimension, point) VALUES (?, ?, ?)",
-                (topic, dimension, point),
+                "INSERT INTO kb_entries (url, title, platform, summary, topic, dimension, created_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (url, title, platform, summary, topic, dimension, now),
             )
-            if cursor.rowcount:
-                new_points.append(point)
+            entry_id = cursor.lastrowid
+            for point in key_points:
+                conn.execute(
+                    "INSERT INTO kb_points (entry_id, point) VALUES (?, ?)",
+                    (entry_id, point),
+                )
 
-    if topic not in existing_topics:
-        action = "created_topic"
-        msg = f"✨ 新建主题「{topic}」并添加维度「{dimension}」"
-    elif dimension not in existing_dims:
-        action = "created_dimension"
-        msg = f"📂 在「{topic}」下新建维度「{dimension}」"
+    total_pts = sum(len(e.get("key_points") or []) for e in entries)
+    n = len(entries)
+
+    if is_update:
+        msg = f"🔄 已更新「{title[:20]}」，重新分入 {n} 个主题"
+    elif n == 1:
+        t, d = entries[0].get("topic", ""), entries[0].get("dimension", "")
+        msg = f"✨ 已保存到「{t} › {d}」"
     else:
-        action = "merged"
-        msg = f"🔗 已合并到「{topic} → {dimension}」，新增 {len(new_points)} 个要点"
+        topics_str = "、".join(
+            f"{e.get('topic','')}" for e in entries[:3]
+        ) + ("…" if n > 3 else "")
+        msg = f"✨ 已按 {n} 个主题分类保存：{topics_str}"
 
     return {
-        "action": action,
         "message": msg,
-        "topic": topic,
-        "dimension": dimension,
-        "new_points_count": len(new_points),
+        "entries": entries,
+        "summary": summary,
+        "is_update": is_update,
+        "total_points": total_pts,
     }
 
 
 def get_all() -> dict:
-    """
-    返回与原 JSON 版本相同结构的 dict，
-    确保 mindmap_renderer.py 和 app.py 无需修改。
-    """
+    """返回完整知识树，结构：topics → dimensions → {points, sources}"""
     with _conn() as conn:
-        points_rows = conn.execute(
-            "SELECT topic, dimension, point FROM points ORDER BY topic, dimension"
-        ).fetchall()
-        sources_rows = conn.execute(
-            "SELECT topic, dimension, title, url, platform, summary, created_at"
-            " FROM sources ORDER BY created_at"
-        ).fetchall()
-        total_items = conn.execute("SELECT COUNT(*) FROM sources").fetchone()[0]
+        rows = conn.execute("""
+            SELECT
+                e.id, e.topic, e.dimension,
+                e.url, e.title, e.summary, e.created_at,
+                p.point
+            FROM kb_entries e
+            LEFT JOIN kb_points p ON p.entry_id = e.id
+            ORDER BY e.topic, e.dimension, e.created_at, p.id
+        """).fetchall()
+
+        total_items = conn.execute(
+            "SELECT COUNT(DISTINCT COALESCE(NULLIF(url,''), CAST(id AS TEXT))) FROM kb_entries"
+        ).fetchone()[0]
 
     topics: dict = {}
+    entry_seen: set = set()
 
-    for row in points_rows:
-        t, d, p = row["topic"], row["dimension"], row["point"]
+    for row in rows:
+        t, d, eid = row["topic"], row["dimension"], row["id"]
         topics.setdefault(t, {"dimensions": {}})
         topics[t]["dimensions"].setdefault(d, {"points": [], "sources": []})
-        topics[t]["dimensions"][d]["points"].append(p)
 
-    for row in sources_rows:
-        t, d = row["topic"], row["dimension"]
-        topics.setdefault(t, {"dimensions": {}})
-        topics[t]["dimensions"].setdefault(d, {"points": [], "sources": []})
-        topics[t]["dimensions"][d]["sources"].append({
-            "title": row["title"],
-            "url": row["url"],
-            "platform": row["platform"],
-            "summary": row["summary"],
-            "date": row["created_at"][:10],
-        })
+        if row["point"] and row["point"] not in topics[t]["dimensions"][d]["points"]:
+            topics[t]["dimensions"][d]["points"].append(row["point"])
+
+        if eid not in entry_seen:
+            entry_seen.add(eid)
+            topics[t]["dimensions"][d]["sources"].append({
+                "title": row["title"],
+                "url": row["url"] or "",
+                "summary": row["summary"] or "",
+                "date": (row["created_at"] or "")[:10],
+            })
 
     return {
         "topics": topics,
@@ -153,12 +215,16 @@ def get_all() -> dict:
 
 def get_stats() -> dict:
     with _conn() as conn:
-        total_items = conn.execute("SELECT COUNT(*) FROM sources").fetchone()[0]
-        total_topics = conn.execute("SELECT COUNT(DISTINCT topic) FROM points").fetchone()[0]
-        total_dims = conn.execute(
-            "SELECT COUNT(DISTINCT topic || '|' || dimension) FROM points"
+        total_items = conn.execute(
+            "SELECT COUNT(DISTINCT COALESCE(NULLIF(url,''), CAST(id AS TEXT))) FROM kb_entries"
         ).fetchone()[0]
-        total_points = conn.execute("SELECT COUNT(*) FROM points").fetchone()[0]
+        total_topics = conn.execute(
+            "SELECT COUNT(DISTINCT topic) FROM kb_entries"
+        ).fetchone()[0]
+        total_dims = conn.execute(
+            "SELECT COUNT(DISTINCT topic || '|' || dimension) FROM kb_entries"
+        ).fetchone()[0]
+        total_points = conn.execute("SELECT COUNT(*) FROM kb_points").fetchone()[0]
 
     return {
         "total_items": total_items,

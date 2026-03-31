@@ -11,17 +11,17 @@ load_dotenv()
 PROVIDER = "deepseek"
 API_KEY_ENV = "DEEPSEEK_API_KEY"
 BASE_URL = "https://api.deepseek.com"
-TEXT_MODEL = "deepseek-chat"       # DeepSeek-V3，用于文字提取
-VISION_MODEL = "deepseek-chat"     # DeepSeek-V3 支持图片输入
+TEXT_MODEL = "deepseek-chat"       # DeepSeek-V3
+VISION_MODEL = "deepseek-chat"
 
-# 通义千问（有免费额度）：取消下面注释并注释上方5行
+# 通义千问（有免费额度）：
 # PROVIDER = "qwen"
 # API_KEY_ENV = "DASHSCOPE_API_KEY"
 # BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 # TEXT_MODEL = "qwen-plus"
 # VISION_MODEL = "qwen-vl-plus"
 
-# Claude（原始配置，需能访问 api.anthropic.com）：
+# Claude：
 # PROVIDER = "claude"
 # API_KEY_ENV = "ANTHROPIC_API_KEY"
 # BASE_URL = "https://api.anthropic.com/v1"
@@ -31,56 +31,54 @@ VISION_MODEL = "deepseek-chat"     # DeepSeek-V3 支持图片输入
 
 client = OpenAI(api_key=os.getenv(API_KEY_ENV), base_url=BASE_URL)
 
-EXTRACTION_SYSTEM_PROMPT = """你是用户最懂他的朋友，帮他把刷到的好文章"翻译"成他自己的笔记，方便日后找回和复用。
+EXTRACTION_SYSTEM_PROMPT = """你是用户最懂他的朋友，帮他把刷到的好文章"翻译"成自己的知识库笔记。
 
-━━━ 第一步：判断内容类型 ━━━
-- list（清单类）：推荐合集、工具列表、技巧汇总，有明确编号条目
-- insight（观点类）：作者分享思考、方法论、经验总结
-- tutorial（教程类）：有操作步骤的指南、攻略
-- news（资讯类）：新闻、产品发布、行业动态
+━━━ 核心任务 ━━━
+把一篇文章拆分成 1～N 个"知识条目"，每个条目对应一个独立的主题+维度。
+当文章涉及多个不同主题时，必须拆成多个条目，分别存入知识树的不同节点。
 
-━━━ 第二步：分类——以"方便找回"为唯一标准 ━━━
-判断原则：
-  · 一个月后用户想找这篇内容，他会先想到什么词？那就是 topic
-  · topic 下哪个维度最能说明这篇的"用途"？那就是 dimension
-  · topic 不要太宽泛（不要什么都叫"技术"），也不要太细（不要用文章标题当 topic）
+━━━ 何时拆分为多个条目 ━━━
+✅ 文章讨论了明显不同的两件事（如：推荐工具 + 分享方法论）
+✅ 清单里有不同类型/用途的内容，可以按类别归类
+✅ 内容针对不同场景或人群，分开存放更好找
+❌ 不要为了拆而拆，紧密相关的内容放一个条目就好
 
-示例：工具推荐文 → topic=AI工具, dimension=效率工具 ｜ Prompt教程 → topic=提示词, dimension=写法技巧
-同类内容归同一 topic，知识越攒越聚合，不要每篇都建新主题。
+━━━ 分类规则（以"方便找回"为标准）━━━
+- topic（主题）：用户一个月后想找这条内容，会先想到什么大方向？
+  例如：AI工具、提示词工程、创业方法、健身计划
+- dimension（维度）：这批内容的具体用途是什么？
+  例如：编程助手推荐、结构化写法、早期验证、增肌食谱
+- 同类内容归入相同 topic，知识越积累越聚合
 
-━━━ 第三步：要点提炼规则 ━━━
+━━━ 要点提炼规则 ━━━
 
-写作风格要求（最重要）：
+写作风格（最重要）：
   · 像朋友推荐一样写，让人一眼就想看下去
-  · 用"你可以……""这个……帮你……""适合……的人"等生活化表达
-  · 禁止：术语堆砌、"该工具具备……功能"、过度正式的书面腔
-  · 每条要点读完应该让人觉得"哦，这个有用！"
+  · 禁止书面腔："该工具具备……功能""本文介绍了……"这类的不要写
+  · 每条读完让人觉得"哦，这个有用！"
 
-【list 清单类】——原文有几条就写几条，一条都不能少
-  格式：「名称 — 用大白话说它帮你解决什么问题，或者为什么值得一试」
-  好的示例：「Cursor — 写代码时 AI 帮你补全和改 bug，效率高到不像话」
-  差的示例：「Cursor — 一款具备AI辅助功能的代码编辑器」
+【list 清单类】原文有几条写几条，一条都不能少
+  格式：「名称 — 用大白话说它帮你解决什么问题，为什么值得一试」
+  好示例：「Cursor — 写代码时 AI 实时补全和改 bug，速度快到不像话」
+  差示例：「Cursor — 一款具备AI辅助功能的代码编辑器」
 
-【insight 观点类】——提炼 3-5 个让你觉得"说得对！"的结论
-  格式：口语化的行动建议或认知翻转句，读完有共鸣
-  好的示例：「别把时间花在"看起来忙"上，只盯着能出结果的事做」
-  差的示例：「应采用结果导向型工作方式替代任务导向型工作模式」
+【insight 观点类】提炼 3-5 个让你觉得"说得对！"的结论
+  好示例：「别把时间花在"看起来忙"上，只盯着能出结果的事做」
+  差示例：「应采用结果导向型工作方式替代任务导向型工作模式」
 
-【tutorial 教程类】——提炼关键步骤，写成"你去做"的语气
-  格式：「具体怎么操作（15字以内，一看就能动手）」
+【tutorial 教程类】提炼关键步骤，写成"你去做"的语气
 
-【news 资讯类】——说清楚发生了什么、对你有什么影响
-  格式：「事情 + 为什么你该关注」
+【news 资讯类】说清楚发生了什么、对你有什么影响
 
 ━━━ summary 写法 ━━━
-一句话说清楚"这篇文章对你有什么用"，20字以内，口语化。
-好的示例：「收藏这篇，装好这几个工具效率翻倍」
-差的示例：「本文介绍了多种提升工作效率的AI工具」
+一句口语化的话说清楚"这篇对你有什么用"，20字以内。
+好示例：「收藏这篇，几个工具装上去效率翻倍」
+差示例：「本文介绍了多种提升工作效率的AI工具」
 
-━━━ 通用要求 ━━━
-- 只返回 JSON，不要任何其他文字"""
+━━━ 输出要求 ━━━
+只返回 JSON，不要任何其他文字"""
 
-EXTRACTION_USER_PROMPT = """内容如下，请按规则提取：
+EXTRACTION_USER_PROMPT = """请分析下面的文章，提取知识并按主题拆分为多个条目：
 
 标题：{title}
 链接：{url}
@@ -88,14 +86,16 @@ EXTRACTION_USER_PROMPT = """内容如下，请按规则提取：
 正文：
 {content}
 
-返回 JSON：
+返回 JSON（entries 可以有多个，文章涉及多个主题时必须拆分）：
 {{
-  "content_type": "list 或 insight 或 tutorial 或 news",
-  "topic": "一级主题",
-  "dimension": "二级维度",
-  "key_points": ["要点1", "要点2", ...],
-  "summary": "一句话说清楚这篇对读者有什么用（口语化，20字以内）",
-  "source_url": "{url}"
+  "summary": "一句口语化总结（20字以内）",
+  "entries": [
+    {{
+      "topic": "主题（大方向，方便一个月后找到）",
+      "dimension": "维度（具体用途或类别）",
+      "key_points": ["要点1", "要点2", ...]
+    }}
+  ]
 }}"""
 
 
@@ -108,7 +108,6 @@ def _parse_json_safely(raw: str) -> dict:
 
 
 def _chat(model: str, messages: list, max_tokens: int = 1000) -> str:
-    """统一的 OpenAI 兼容调用入口"""
     response = client.chat.completions.create(
         model=model,
         max_tokens=max_tokens,
@@ -118,11 +117,11 @@ def _chat(model: str, messages: list, max_tokens: int = 1000) -> str:
 
 
 def extract_from_text(text: str, title: str = "", url: str = "") -> dict:
-    """从文字内容中提取结构化知识（公众号文章正文 / 粘贴文字）"""
+    """从文字内容中提取结构化知识，支持拆分为多个主题条目"""
     try:
         raw = _chat(
             model=TEXT_MODEL,
-            max_tokens=2000,
+            max_tokens=2500,
             messages=[
                 {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
                 {"role": "user", "content": EXTRACTION_USER_PROMPT.format(
@@ -140,11 +139,11 @@ def extract_from_text(text: str, title: str = "", url: str = "") -> dict:
 
 
 def extract_from_image(image_base64: str) -> dict:
-    """从图片（小红书截图）中提取结构化知识（Vision 模型）"""
+    """从图片（小红书截图）中提取结构化知识"""
     try:
         raw = _chat(
             model=VISION_MODEL,
-            max_tokens=1500,
+            max_tokens=2000,
             messages=[
                 {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
                 {
@@ -157,7 +156,7 @@ def extract_from_image(image_base64: str) -> dict:
                         {
                             "type": "text",
                             "text": (
-                                "这是一张截图。请先完整阅读图片中的所有文字，"
+                                "这是一张截图，请先完整阅读图片中的所有文字，"
                                 "然后按照要求提取结构化知识。\n\n"
                                 + EXTRACTION_USER_PROMPT.format(
                                     title="（图片内容）",

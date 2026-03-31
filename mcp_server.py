@@ -12,20 +12,28 @@ def _get_ai():
     from ai_processor import extract_from_text, extract_from_image
     return extract_from_text, extract_from_image
 
-def _format_save_result(r: dict, knowledge: dict, url: str) -> str:
-    """统一格式化保存结果，输出通俗、结构清晰的消息。"""
-    points = knowledge.get("key_points", [])
-    points_text = "\n".join(f"  {p}" for p in points)
-    source_line = f"\n🔗 来源：{url}" if url else ""
-    view_url = "https://knowledge-flow-production-f40d.up.railway.app/view"
-    return (
-        f"{r['message']}\n\n"
-        f"📌 {knowledge.get('topic')} › {knowledge.get('dimension')}\n"
-        f"💡 {knowledge.get('summary', '')}\n\n"
-        f"📝 提取要点：\n{points_text}"
-        f"{source_line}\n\n"
-        f"📊 查看完整知识图谱：{view_url}"
-    )
+_VIEW_URL = "https://knowledge-flow-production-f40d.up.railway.app/view"
+
+
+def _format_save_result(r: dict, url: str) -> str:
+    """格式化保存结果，支持多条目。"""
+    lines = [r["message"]]
+    summary = r.get("summary", "")
+    if summary:
+        lines.append(f"\n💡 {summary}")
+
+    for entry in r.get("entries", []):
+        topic = entry.get("topic", "")
+        dim = entry.get("dimension", "")
+        points = entry.get("key_points", [])
+        lines.append(f"\n📌 {topic} › {dim}")
+        for p in points:
+            lines.append(f"  · {p}")
+
+    if url:
+        lines.append(f"\n🔗 来源：{url}")
+    lines.append(f"\n📊 查看完整知识库：{_VIEW_URL}")
+    return "\n".join(lines)
 
 
 # ── MCP Server 定义 ───────────────────────────────────────────────
@@ -59,7 +67,7 @@ def save_article(url: str) -> str:
         "url": url,
         "platform": "公众号",
     })
-    return _format_save_result(r, knowledge, url)
+    return _format_save_result(r, url)
 
 
 @mcp.tool()
@@ -78,7 +86,7 @@ def save_text(content: str, title: str = "") -> str:
         "url": "",
         "platform": "手动",
     })
-    return _format_save_result(r, knowledge, "")
+    return _format_save_result(r, "")
 
 
 @mcp.tool()
@@ -150,74 +158,81 @@ def _render_view_page(stats: dict, tree_html: str) -> str:
 <style>
   * {{ box-sizing: border-box; margin: 0; padding: 0; }}
   body {{
-    font-family: -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
-    background: #f3f7f4;
-    color: #2c3e35;
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #f7f8f5;
+    color: #2c2f2a;
     min-height: 100vh;
     font-size: 15px;
+    line-height: 1.6;
   }}
 
   /* ── 顶栏 ──────────────────────────── */
   header {{
     background: #fff;
-    border-bottom: 1px solid #e2ede6;
-    padding: 18px 20px 14px;
+    border-bottom: 2px solid #e8ede3;
+    padding: 16px 18px 13px;
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
   }}
   header h1 {{
-    font-size: 1.2rem;
+    font-size: 1.15rem;
     font-weight: 700;
-    color: #2d6a4f;
-    letter-spacing: .3px;
+    color: #2d5a3d;
+    letter-spacing: .4px;
   }}
   header p {{
-    margin-top: 3px;
     font-size: .78rem;
-    color: #95b8a2;
+    color: #a8b8a0;
   }}
 
   /* ── 统计卡片（一行四列）─────────────── */
   .stats {{
     display: grid;
     grid-template-columns: repeat(4, 1fr);
-    gap: 10px;
-    padding: 14px 16px 6px;
+    gap: 8px;
+    padding: 12px 14px 4px;
   }}
   .stat-card {{
     background: #fff;
-    border-radius: 12px;
-    padding: 14px 10px 12px;
+    border-radius: 10px;
+    padding: 12px 8px 10px;
     text-align: center;
-    border: 1px solid #e2ede6;
+    border: 1px solid #e8ede3;
   }}
   .stat-card .num {{
-    font-size: 1.65rem;
+    font-size: 1.6rem;
     font-weight: 700;
-    color: #2d6a4f;
     line-height: 1;
   }}
+  /* 交替用绿色和琥珀色 */
+  .stat-card:nth-child(1) .num,
+  .stat-card:nth-child(3) .num {{ color: #3a7d52; }}
+  .stat-card:nth-child(2) .num,
+  .stat-card:nth-child(4) .num {{ color: #c07c1a; }}
   .stat-card .lbl {{
-    font-size: .68rem;
-    color: #95b8a2;
+    font-size: .66rem;
+    color: #a8b8a0;
     margin-top: 5px;
-    letter-spacing: .3px;
+    letter-spacing: .4px;
   }}
 
-  /* ── 知识树容器 ──────────────────────── */
-  .tree {{ padding: 14px 16px 48px; }}
+  /* ── 知识树 ──────────────────────────── */
+  .tree {{ padding: 12px 14px 52px; }}
 
-  /* ── 主题块（一级）────────────────────── */
+  /* ── 一级：主题 ─────────────────────── */
   .topic-block {{
-    margin-bottom: 14px;
-    border-radius: 14px;
+    margin-bottom: 12px;
+    border-radius: 12px;
     background: #fff;
-    border: 1px solid #d4e8db;
+    border: 1px solid #dce8d8;
     overflow: hidden;
   }}
   .topic-summary {{
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 15px 18px;
+    padding: 13px 16px;
     cursor: pointer;
     list-style: none;
     gap: 8px;
@@ -226,75 +241,73 @@ def _render_view_page(stats: dict, tree_html: str) -> str:
   }}
   .topic-summary::-webkit-details-marker {{ display: none; }}
   .topic-name {{
-    font-size: 1rem;
+    font-size: .97rem;
     font-weight: 700;
-    color: #1b4332;
+    color: #1e3d28;
     flex: 1;
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 9px;
   }}
+  /* 琥珀色小圆点 */
   .topic-name::before {{
     content: "";
     display: inline-block;
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: #52b788;
+    background: #d97706;
     flex-shrink: 0;
   }}
   .topic-meta {{
-    font-size: .7rem;
-    color: #95b8a2;
+    font-size: .68rem;
+    color: #a8b8a0;
     white-space: nowrap;
   }}
-  /* 展开时顶部高亮 */
   .topic-block[open] > .topic-summary {{
-    border-bottom: 1px solid #d4e8db;
-    background: #f6fbf7;
+    border-bottom: 1px solid #dce8d8;
+    background: #f8fbf6;
   }}
 
-  /* ── 主题体（用连接线表达父子关系）─────── */
+  /* ── 主题体 + 连接线 ────────────────── */
   .topic-body {{
-    padding: 10px 14px 12px 14px;
+    padding: 8px 12px 10px 12px;
     position: relative;
   }}
-  /* 左侧竖线 */
   .topic-body::before {{
     content: "";
     position: absolute;
-    left: 28px;
-    top: 10px;
-    bottom: 12px;
+    left: 26px;
+    top: 8px;
+    bottom: 10px;
     width: 1.5px;
-    background: linear-gradient(to bottom, #b7e4c7, #d4e8db);
+    background: linear-gradient(to bottom, #b7d9c4, #dce8d8);
     border-radius: 2px;
   }}
 
-  /* ── 维度块（二级）────────────────────── */
+  /* ── 二级：维度 ─────────────────────── */
   .dim-block {{
-    margin: 6px 0 6px 28px;
-    border-radius: 10px;
-    background: #f6fbf7;
-    border: 1px solid #d4e8db;
+    margin: 5px 0 5px 26px;
+    border-radius: 9px;
+    background: #f8fbf6;
+    border: 1px solid #dce8d8;
     position: relative;
   }}
-  /* 维度左侧横线（连接竖线）*/
   .dim-block::before {{
     content: "";
     position: absolute;
-    left: -14px;
+    left: -13px;
     top: 50%;
-    width: 14px;
+    width: 13px;
     height: 1.5px;
-    background: #b7e4c7;
+    background: #b7d9c4;
     transform: translateY(-50%);
   }}
   .dim-summary {{
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 11px 14px;
+    padding: 10px 13px;
     cursor: pointer;
     list-style: none;
     gap: 8px;
@@ -303,95 +316,94 @@ def _render_view_page(stats: dict, tree_html: str) -> str:
   }}
   .dim-summary::-webkit-details-marker {{ display: none; }}
   .dim-name {{
-    font-size: .88rem;
+    font-size: .85rem;
     font-weight: 600;
-    color: #2d6a4f;
+    color: #2d5a3d;
     flex: 1;
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 5px;
   }}
   .dim-name::before {{
     content: "›";
-    color: #52b788;
-    font-size: 1rem;
+    color: #52a872;
+    font-size: .95rem;
     font-weight: 700;
     flex-shrink: 0;
   }}
   .dim-meta {{
-    font-size: .68rem;
-    color: #95b8a2;
+    font-size: .66rem;
+    color: #a8b8a0;
     white-space: nowrap;
   }}
   .dim-block[open] > .dim-summary {{
-    border-bottom: 1px solid #d4e8db;
+    border-bottom: 1px solid #dce8d8;
   }}
-  .dim-body {{ padding: 10px 14px 12px; }}
+  .dim-body {{ padding: 8px 13px 11px; }}
 
-  /* ── 要点列表（三级）──────────────────── */
+  /* ── 三级：要点 ─────────────────────── */
   .points {{
     list-style: none;
     padding: 0;
-    margin: 0 0 8px;
+    margin: 0 0 7px;
     counter-reset: pt-counter;
   }}
   .points li {{
     counter-increment: pt-counter;
-    padding: 7px 0 7px 28px;
+    padding: 6px 0 6px 26px;
     position: relative;
-    font-size: .84rem;
+    font-size: .83rem;
     line-height: 1.65;
-    color: #3a5042;
-    border-bottom: 1px solid #eef5f0;
+    color: #3a4a3c;
+    border-bottom: 1px solid #eff3ec;
   }}
   .points li:last-child {{ border-bottom: none; padding-bottom: 0; }}
+  /* 琥珀色序号圆 */
   .points li::before {{
     content: counter(pt-counter);
     position: absolute;
     left: 0;
     top: 8px;
-    width: 18px;
-    height: 18px;
-    background: #d8f3dc;
-    color: #2d6a4f;
-    font-size: .65rem;
+    width: 17px;
+    height: 17px;
+    background: #fef3c7;
+    color: #c07c1a;
+    font-size: .62rem;
     font-weight: 700;
     border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    line-height: 18px;
     text-align: center;
+    line-height: 17px;
   }}
 
   /* ── 来源区 ──────────────────────────── */
   .sources {{
-    margin-top: 8px;
-    padding-top: 8px;
-    border-top: 1px dashed #d4e8db;
+    margin-top: 7px;
+    padding-top: 7px;
+    border-top: 1px dashed #dce8d8;
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: 4px 8px;
-    font-size: .73rem;
+    font-size: .71rem;
   }}
-  .src-label {{ color: #b2c9bb; }}
+  .src-label {{ color: #b8c8b0; }}
   .src-link {{
-    color: #52b788;
+    color: #3a7d52;
     text-decoration: none;
-    border-bottom: 1px dotted #52b788;
+    border-bottom: 1px dotted #3a7d52;
   }}
-  .src-link:hover {{ color: #2d6a4f; border-color: #2d6a4f; }}
-  .src-nolink {{ color: #74a58a; }}
-  .src-date {{ color: #c5dcd0; font-size: .68rem; }}
+  .src-link:hover {{ color: #1e3d28; }}
+  .src-nolink {{ color: #6b8c72; }}
+  .src-date {{ color: #c8d8c0; font-size: .66rem; }}
 
   .empty-tip {{
     text-align: center;
     padding: 60px 20px;
-    color: #b2c9bb;
-    font-size: .95rem;
-    line-height: 2.2;
+    color: #b8c8b0;
+    font-size: .9rem;
+    line-height: 2.4;
   }}
+  .empty-tip strong {{ color: #d97706; }}
 </style>
 </head>
 <body>
@@ -473,10 +485,9 @@ async def api_save_article(req: ArticleReq, authorization: str = Header(default=
     return {
         "success": True,
         "message": r["message"],
-        "topic": knowledge.get("topic"),
-        "dimension": knowledge.get("dimension"),
-        "summary": knowledge.get("summary"),
-        "key_points": knowledge.get("key_points", []),
+        "summary": r.get("summary", ""),
+        "entries": r.get("entries", []),
+        "is_update": r.get("is_update", False),
     }
 
 
@@ -501,10 +512,9 @@ async def api_save_text(req: TextReq, authorization: str = Header(default="")):
     return {
         "success": True,
         "message": r["message"],
-        "topic": knowledge.get("topic"),
-        "dimension": knowledge.get("dimension"),
-        "summary": knowledge.get("summary"),
-        "key_points": knowledge.get("key_points", []),
+        "summary": r.get("summary", ""),
+        "entries": r.get("entries", []),
+        "is_update": r.get("is_update", False),
     }
 
 

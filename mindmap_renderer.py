@@ -25,7 +25,7 @@ def kb_to_html_tree(kb: dict) -> str:
     """
     topics = kb.get("topics", {})
     if not topics:
-        return '<p class="empty-tip">还没有内容，先用龙虾发一篇文章试试！</p>'
+        return '<p class="empty-tip">还没有内容<br><strong>发给龙虾一篇文章链接</strong>，知识树就会长出来 🌱</p>'
 
     blocks = []
     for idx, (topic, topic_data) in enumerate(topics.items()):
