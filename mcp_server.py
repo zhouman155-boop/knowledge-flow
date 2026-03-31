@@ -1,12 +1,16 @@
 import os
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from mcp.server.fastmcp import FastMCP
 
-from extractor import extract_from_url, image_to_base64
-from ai_processor import extract_from_text, extract_from_image
+from extractor import extract_from_url
 from knowledge_store import add_knowledge, get_all, get_stats
 from mindmap_renderer import kb_to_markdown, render_mindmap_html, kb_to_text_outline
+
+# AI 模块延迟导入，避免缺少环境变量时启动即崩溃
+def _get_ai():
+    from ai_processor import extract_from_text, extract_from_image
+    return extract_from_text, extract_from_image
 
 # ── MCP Server 定义 ───────────────────────────────────────────────
 mcp = FastMCP(
@@ -29,6 +33,7 @@ def save_article(url: str) -> str:
     if "error" in result:
         return f"❌ 链接提取失败：{result['error']}\n\n💡 提示：可以把文章正文复制后用 save_text 保存。"
 
+    extract_from_text, _ = _get_ai()
     knowledge = extract_from_text(result["text"], result.get("title", ""))
     if "error" in knowledge:
         return f"❌ AI 处理失败：{knowledge['error']}"
@@ -53,6 +58,7 @@ def save_text(content: str, title: str = "") -> str:
     保存文字内容到知识库。适用于复制粘贴的文章正文、读书笔记、任意文字。
     用法示例：帮我记录这段内容：[粘贴文字]
     """
+    extract_from_text, _ = _get_ai()
     knowledge = extract_from_text(content, title)
     if "error" in knowledge:
         return f"❌ AI 处理失败：{knowledge['error']}"
@@ -107,6 +113,12 @@ app = FastAPI(title="KnowledgeFlow MCP Server")
 
 # 将 MCP server 挂载到 /mcp 路径（OpenClaw 连接此地址）
 app.mount("/mcp", mcp.streamable_http_app())
+
+
+@app.get("/health")
+async def health():
+    """Railway healthcheck 端点，轻量级不依赖 AI 或数据库。"""
+    return JSONResponse({"status": "ok"})
 
 
 @app.get("/", response_class=HTMLResponse)
