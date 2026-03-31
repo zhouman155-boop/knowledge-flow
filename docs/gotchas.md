@@ -201,7 +201,17 @@ DATA_DIR = os.getenv("DATA_DIR", os.path.join(os.path.dirname(__file__), "data")
 
 ---
 
-### 坑12：一篇文章可能拆成多个 entries，SKILL.md 必须处理多条目回复
+### 坑12：Railway 修改变量后必须手动点 Deploy 才生效
+
+**现象**：明明已经在 Variables 里加了 `DATABASE_URL`，服务还是用的旧配置，数据仍然丢失。
+
+**原因**：Railway 修改环境变量后，服务不会自动重新部署。页面会出现 **"1 Change"** 提示和顶部 **"Deploy"** 按钮，必须手动点击 Deploy，变量才会真正注入到运行中的服务。
+
+**解法**：每次在 Variables 里添加或修改变量后，看到 "1 Change" 提示就点一下 **Deploy** 按钮，等部署完成（显示 Deployment successful）再测试。
+
+---
+
+### 坑13：一篇文章可能拆成多个 entries，SKILL.md 必须处理多条目回复
 
 **现象**：API 返回 `entries` 数组有多个元素，龙虾只展示了第一条。
 
