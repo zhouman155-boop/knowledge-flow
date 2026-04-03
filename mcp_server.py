@@ -462,7 +462,29 @@ def _render_view_page(stats: dict, tree_html: str) -> str:
   .form-news     {{ background: #ffedd5; color: #9a3412; }}
   .form-insight  {{ background: #fef3c7; color: #92400e; }}
   .form-story    {{ background: #e0e7ff; color: #3730a3; }}
+  .form-product  {{ background: #fce7f3; color: #9d174d; }}
   .form-default  {{ background: #f3f4f6; color: #6b7280; }}
+
+  .product-header {{
+    font-weight: 600;
+    font-size: .92rem;
+    margin: 12px 0 4px 0;
+    padding: 6px 0;
+    border-bottom: 1px solid #e5e7eb;
+  }}
+  .product-header .src-link {{
+    color: #1e40af;
+    text-decoration: none;
+  }}
+  .product-header .src-link:hover {{
+    text-decoration: underline;
+  }}
+  .product-header .src-date {{
+    color: #9ca3af;
+    font-weight: 400;
+    font-size: .8rem;
+    margin-left: 8px;
+  }}
 
   .empty-tip {{
     text-align: center;

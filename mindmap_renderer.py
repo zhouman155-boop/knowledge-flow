@@ -59,35 +59,8 @@ def kb_to_html_tree(kb: dict) -> str:
                 points = form_data.get("points", [])
                 sources = form_data.get("sources", [])
 
-                # 要点列表
-                pts_html = ("<ol class='points'>" + "".join(
-                    f"<li>{_esc(p)}</li>" for p in points
-                ) + "</ol>") if points else ""
-
-                # 来源链接
-                src_items = []
-                for s in sources:
-                    url = s.get("url", "")
-                    title = _esc(s.get("title") or "未知标题")
-                    date = s.get("date", "")
-                    if url:
-                        src_items.append(
-                            f'<a href="{_esc(url)}" target="_blank" class="src-link">'
-                            f'{title}</a><span class="src-date">{date}</span>'
-                        )
-                    else:
-                        src_items.append(
-                            f'<span class="src-nolink">{title}</span>'
-                            f'<span class="src-date">{date}</span>'
-                        )
-
-                src_html = (
-                    '<div class="sources"><span class="src-label">📎 来源</span>'
-                    + " &nbsp;·&nbsp; ".join(src_items)
-                    + "</div>"
-                ) if src_items else ""
-
                 fc = _form_class(form)
+                body_html = _render_form_body(form, points, sources)
                 form_blocks.append(f"""
 <details class="form-block">
   <summary class="form-summary">
@@ -95,8 +68,7 @@ def kb_to_html_tree(kb: dict) -> str:
     <span class="form-meta">{len(sources)} 篇来源 · {len(points)} 个要点</span>
   </summary>
   <div class="form-body">
-    {pts_html}
-    {src_html}
+    {body_html}
   </div>
 </details>""")
 
@@ -125,6 +97,87 @@ def kb_to_html_tree(kb: dict) -> str:
     return "\n".join(blocks)
 
 
+def _render_form_body(form: str, points: list, sources: list) -> str:
+    """渲染一个内容形式块的内容。产品拆解按来源标题分组，其他形式平铺。"""
+    if form == "产品拆解" and sources:
+        return _render_product_grouped(points, sources)
+    return _render_flat(points, sources)
+
+
+def _render_flat(points: list, sources: list) -> str:
+    pts_html = ("<ol class='points'>" + "".join(
+        f"<li>{_esc(p)}</li>" for p in points
+    ) + "</ol>") if points else ""
+    return pts_html + _render_sources(sources)
+
+
+def _render_product_grouped(points: list, sources: list) -> str:
+    """产品拆解：用来源标题做分组子标题，要点按来源均分。"""
+    titles = list(dict.fromkeys(s.get("title") or "未知标题" for s in sources))
+
+    if len(titles) <= 1:
+        title = titles[0] if titles else "未知标题"
+        src = sources[0] if sources else {}
+        url = src.get("url", "")
+        date = src.get("date", "")
+        link_html = (
+            f'<a href="{_esc(url)}" target="_blank" class="src-link">{_esc(title)}</a>'
+            if url else f'<span class="src-nolink">{_esc(title)}</span>'
+        )
+        header = f'<div class="product-header">📌 {link_html} <span class="src-date">{date}</span></div>'
+        pts_html = ("<ol class='points'>" + "".join(
+            f"<li>{_esc(p)}</li>" for p in points
+        ) + "</ol>") if points else ""
+        return header + pts_html
+
+    per_title = max(1, len(points) // len(titles)) if titles else len(points)
+    blocks = []
+    offset = 0
+    for i, title in enumerate(titles):
+        src = next((s for s in sources if (s.get("title") or "未知标题") == title), {})
+        url = src.get("url", "")
+        date = src.get("date", "")
+        link_html = (
+            f'<a href="{_esc(url)}" target="_blank" class="src-link">{_esc(title)}</a>'
+            if url else f'<span class="src-nolink">{_esc(title)}</span>'
+        )
+        header = f'<div class="product-header">📌 {link_html} <span class="src-date">{date}</span></div>'
+        end = offset + per_title if i < len(titles) - 1 else len(points)
+        chunk = points[offset:end]
+        offset = end
+        pts_html = ("<ol class='points'>" + "".join(
+            f"<li>{_esc(p)}</li>" for p in chunk
+        ) + "</ol>") if chunk else ""
+        blocks.append(header + pts_html)
+
+    return "\n".join(blocks)
+
+
+def _render_sources(sources: list) -> str:
+    src_items = []
+    for s in sources:
+        url = s.get("url", "")
+        title = _esc(s.get("title") or "未知标题")
+        date = s.get("date", "")
+        if url:
+            src_items.append(
+                f'<a href="{_esc(url)}" target="_blank" class="src-link">'
+                f'{title}</a><span class="src-date">{date}</span>'
+            )
+        else:
+            src_items.append(
+                f'<span class="src-nolink">{title}</span>'
+                f'<span class="src-date">{date}</span>'
+            )
+    if not src_items:
+        return ""
+    return (
+        '<div class="sources"><span class="src-label">📎 来源</span>'
+        + " &nbsp;·&nbsp; ".join(src_items)
+        + "</div>"
+    )
+
+
 _FORM_CLASS_MAP = {
     "工具清单": "tools",
     "原理解析": "method",
@@ -133,6 +186,7 @@ _FORM_CLASS_MAP = {
     "行业动态": "news",
     "观点洞察": "insight",
     "案例复盘": "story",
+    "产品拆解": "product",
 }
 
 
