@@ -6,6 +6,7 @@ from mcp.server.fastmcp import FastMCP
 from extractor import extract_from_url
 from knowledge_store import add_knowledge, get_all, get_stats, get_all_entries_raw, update_entry_classification
 from mindmap_renderer import kb_to_markdown, kb_to_html_tree
+from taxonomy import validate_classification
 
 # AI 模块延迟导入，避免缺少环境变量时启动即崩溃
 def _get_ai():
@@ -610,7 +611,7 @@ async def api_topics(authorization: str = Header(default="")):
 
 
 @app.post("/api/reclassify-all")
-async def api_reclassify_all(authorization: str = Header(default="")):
+async def api_reclassify_all(dry_run: bool = False, authorization: str = Header(default="")):
     """
     用新分类体系重新分类所有历史数据。
     不改变要点内容，只更新 topic / dimension / content_form。
@@ -621,8 +622,10 @@ async def api_reclassify_all(authorization: str = Header(default="")):
 
     entries = get_all_entries_raw()
     results = []
+    updated_count = 0
+    unchanged_count = 0
     for entry in entries:
-        old = f"{entry['topic']} › {entry['dimension']}"
+        old = f"{entry['topic']} › {entry['dimension']} [{entry.get('content_form') or '其他'}]"
         cls = reclassify_entry(
             title=entry["title"],
             summary=entry["summary"],
@@ -635,18 +638,48 @@ async def api_reclassify_all(authorization: str = Header(default="")):
         new_topic = cls.get("topic", "其他")
         new_dim = cls.get("dimension", "通用")
         new_form = cls.get("content_form", "")
-        update_entry_classification(entry["id"], new_topic, new_dim, new_form)
+        error = validate_classification(new_topic, new_dim, new_form)
+        if error:
+            results.append({"id": entry["id"], "status": "error", "detail": error})
+            continue
+
+        if (
+            new_topic == entry["topic"]
+            and new_dim == entry["dimension"]
+            and new_form == (entry.get("content_form") or "")
+        ):
+            unchanged_count += 1
+            results.append({
+                "id": entry["id"],
+                "title": entry["title"][:30],
+                "old": old,
+                "new": f"{new_topic} › {new_dim} [{new_form}]",
+                "status": "unchanged",
+            })
+            continue
+
+        if not dry_run:
+            update_entry_classification(entry["id"], new_topic, new_dim, new_form)
+        updated_count += 1
         results.append({
             "id": entry["id"],
             "title": entry["title"][:30],
             "old": old,
             "new": f"{new_topic} › {new_dim} [{new_form}]",
-            "status": "ok",
+            "status": "updated" if not dry_run else "preview",
         })
 
-    ok_count = sum(1 for r in results if r["status"] == "ok")
+    error_count = sum(1 for r in results if r["status"] == "error")
+    action = "预览完成" if dry_run else "重分类完成"
     return {
-        "message": f"重分类完成：{ok_count}/{len(entries)} 条成功",
+        "message": (
+            f"{action}：{updated_count} 条将更新"
+            f"，{unchanged_count} 条无需改动，{error_count} 条失败"
+        ),
+        "dry_run": dry_run,
+        "updated_count": updated_count,
+        "unchanged_count": unchanged_count,
+        "error_count": error_count,
         "details": results,
     }
 

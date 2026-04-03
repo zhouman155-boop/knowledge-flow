@@ -127,11 +127,12 @@ def kb_to_html_tree(kb: dict) -> str:
 
 _FORM_CLASS_MAP = {
     "工具清单": "tools",
-    "方法论":   "method",
+    "原理解析": "method",
+    "实践方法": "tutorial",
     "教程步骤": "tutorial",
     "行业动态": "news",
     "观点洞察": "insight",
-    "案例故事": "story",
+    "案例复盘": "story",
 }
 
 
