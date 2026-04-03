@@ -115,10 +115,15 @@ def list_topics() -> str:
     lines = ["📚 知识框架概览\n"]
     for topic, data in topics.items():
         dims = list(data.get("dimensions", {}).keys())
-        total_pts = sum(len(d["points"]) for d in data["dimensions"].values())
-        lines.append(f"▸ {topic}（{len(dims)} 个维度，{total_pts} 个要点）")
-        for dim in dims:
-            lines.append(f"    · {dim}")
+        total_pts = sum(
+            len(f["points"])
+            for d in data["dimensions"].values()
+            for f in d.get("forms", {}).values()
+        )
+        lines.append(f"▸ {topic}（{len(dims)} 个方向，{total_pts} 个要点）")
+        for dim, dim_data in data.get("dimensions", {}).items():
+            forms = list(dim_data.get("forms", {}).keys())
+            lines.append(f"    · {dim}  [{' / '.join(forms)}]")
     return "\n".join(lines)
 
 
@@ -397,16 +402,58 @@ def _render_view_page(stats: dict, tree_html: str) -> str:
   .src-nolink {{ color: #6b8c72; }}
   .src-date {{ color: #c8d8c0; font-size: .66rem; }}
 
-  /* ── 内容形式标签 ──────────────────────── */
+  /* ── 三级：内容形式 ─────────────────────── */
+  .form-block {{
+    margin: 5px 0 5px 26px;
+    border-radius: 8px;
+    border: 1px solid #e8ede3;
+    background: #fcfdfb;
+    position: relative;
+  }}
+  .form-block::before {{
+    content: "";
+    position: absolute;
+    left: -13px;
+    top: 50%;
+    width: 13px;
+    height: 1.5px;
+    background: #c8ddc0;
+    transform: translateY(-50%);
+  }}
+  .form-summary {{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    cursor: pointer;
+    list-style: none;
+    gap: 8px;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }}
+  .form-summary::-webkit-details-marker {{ display: none; }}
+  .form-name {{
+    font-size: .8rem;
+    font-weight: 700;
+    letter-spacing: .3px;
+  }}
+  .form-meta {{
+    font-size: .63rem;
+    color: #a8b8a0;
+    white-space: nowrap;
+  }}
+  .form-block[open] > .form-summary {{
+    border-bottom: 1px solid #e8ede3;
+  }}
+  .form-body {{ padding: 8px 12px 10px; }}
+
+  /* ── 内容形式色彩系统 ─────────────────── */
   .form-tag {{
     display: inline-block;
-    font-size: .58rem;
-    padding: 1px 6px;
-    border-radius: 3px;
-    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: 700;
     letter-spacing: .3px;
-    vertical-align: middle;
-    margin-right: 4px;
   }}
   .form-tools    {{ background: #dbeafe; color: #1e40af; }}
   .form-method   {{ background: #ede9fe; color: #5b21b6; }}
@@ -553,7 +600,11 @@ async def api_topics(authorization: str = Header(default="")):
     result = []
     for topic, data in kb.get("topics", {}).items():
         dims = list(data.get("dimensions", {}).keys())
-        points_count = sum(len(d["points"]) for d in data["dimensions"].values())
+        points_count = sum(
+            len(f["points"])
+            for d in data["dimensions"].values()
+            for f in d.get("forms", {}).values()
+        )
         result.append({"topic": topic, "dimensions": dims, "points_count": points_count})
     return {"topics": result}
 

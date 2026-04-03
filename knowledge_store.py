@@ -329,29 +329,35 @@ def _sqlite_get_all() -> dict:
 
 
 def _build_tree(rows, total_items: int) -> dict:
+    """
+    三层树结构：topic → dimension → content_form → {points, sources}
+    content_form 为空时归入"其他"
+    """
     topics: dict = {}
     entry_seen: set = set()
 
     for row in rows:
         t = row["topic"]
         d = row["dimension"]
+        cf = (row["content_form"] if "content_form" in row.keys() else "") or "其他"
         eid = row["id"]
+
         topics.setdefault(t, {"dimensions": {}})
-        topics[t]["dimensions"].setdefault(d, {"points": [], "sources": []})
+        topics[t]["dimensions"].setdefault(d, {"forms": {}})
+        topics[t]["dimensions"][d]["forms"].setdefault(cf, {"points": [], "sources": []})
 
         pt = row["point"]
-        if pt and pt not in topics[t]["dimensions"][d]["points"]:
-            topics[t]["dimensions"][d]["points"].append(pt)
+        if pt and pt not in topics[t]["dimensions"][d]["forms"][cf]["points"]:
+            topics[t]["dimensions"][d]["forms"][cf]["points"].append(pt)
 
         if eid not in entry_seen:
             entry_seen.add(eid)
             created = row["created_at"] or ""
-            topics[t]["dimensions"][d]["sources"].append({
+            topics[t]["dimensions"][d]["forms"][cf]["sources"].append({
                 "title": row["title"] or "",
                 "url": row["url"] or "",
                 "summary": row["summary"] or "",
                 "date": created[:10],
-                "content_form": row["content_form"] if "content_form" in row.keys() else "",
             })
 
     return {
