@@ -148,6 +148,42 @@ def extract_from_text(text: str, title: str = "", url: str = "") -> dict:
         return {"error": f"AI 处理失败：{str(e)}"}
 
 
+_RECLASSIFY_PROMPT = f"""你是知识分类专家。根据下方分类体系，为已有知识条目重新分配 topic、dimension、content_form。
+
+{_TAXONOMY_TEXT}
+
+分类规则：
+1. topic 和 dimension 必须严格从词表中选择原文
+2. 仅当所有领域都不合适时，topic 填"其他"
+3. 看核心价值驱动力，而非表面涉及的领域
+4. content_form 描述内容形式，与领域正交
+
+只返回 JSON，不要任何其他文字"""
+
+
+def reclassify_entry(title: str, summary: str, key_points: list[str]) -> dict:
+    """对已有条目重新分类（只改分类，不改内容）"""
+    points_text = "\n".join(f"  · {p}" for p in key_points) if key_points else "（无要点）"
+    user_msg = (
+        f"标题：{title or '（无标题）'}\n"
+        f"摘要：{summary or '（无摘要）'}\n"
+        f"要点：\n{points_text}\n\n"
+        f'返回 JSON：{{"topic": "...", "dimension": "...", "content_form": "..."}}'
+    )
+    try:
+        raw = _chat(
+            model=TEXT_MODEL,
+            max_tokens=200,
+            messages=[
+                {"role": "system", "content": _RECLASSIFY_PROMPT},
+                {"role": "user", "content": user_msg},
+            ],
+        )
+        return _parse_json_safely(raw)
+    except Exception as e:
+        return {"error": str(e)}
+
+
 def extract_from_image(image_base64: str) -> dict:
     """从图片（小红书截图）中提取结构化知识"""
     try:

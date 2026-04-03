@@ -4,7 +4,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from mcp.server.fastmcp import FastMCP
 
 from extractor import extract_from_url
-from knowledge_store import add_knowledge, get_all, get_stats
+from knowledge_store import add_knowledge, get_all, get_stats, get_all_entries_raw, update_entry_classification
 from mindmap_renderer import kb_to_markdown, kb_to_html_tree
 
 # AI 模块延迟导入，避免缺少环境变量时启动即崩溃
@@ -556,6 +556,48 @@ async def api_topics(authorization: str = Header(default="")):
         points_count = sum(len(d["points"]) for d in data["dimensions"].values())
         result.append({"topic": topic, "dimensions": dims, "points_count": points_count})
     return {"topics": result}
+
+
+@app.post("/api/reclassify-all")
+async def api_reclassify_all(authorization: str = Header(default="")):
+    """
+    用新分类体系重新分类所有历史数据。
+    不改变要点内容，只更新 topic / dimension / content_form。
+    """
+    _verify(authorization)
+    _, _ = _get_ai()
+    from ai_processor import reclassify_entry
+
+    entries = get_all_entries_raw()
+    results = []
+    for entry in entries:
+        old = f"{entry['topic']} › {entry['dimension']}"
+        cls = reclassify_entry(
+            title=entry["title"],
+            summary=entry["summary"],
+            key_points=entry.get("points") or [],
+        )
+        if "error" in cls:
+            results.append({"id": entry["id"], "status": "error", "detail": cls["error"]})
+            continue
+
+        new_topic = cls.get("topic", "其他")
+        new_dim = cls.get("dimension", "通用")
+        new_form = cls.get("content_form", "")
+        update_entry_classification(entry["id"], new_topic, new_dim, new_form)
+        results.append({
+            "id": entry["id"],
+            "title": entry["title"][:30],
+            "old": old,
+            "new": f"{new_topic} › {new_dim} [{new_form}]",
+            "status": "ok",
+        })
+
+    ok_count = sum(1 for r in results if r["status"] == "ok")
+    return {
+        "message": f"重分类完成：{ok_count}/{len(entries)} 条成功",
+        "details": results,
+    }
 
 
 if __name__ == "__main__":

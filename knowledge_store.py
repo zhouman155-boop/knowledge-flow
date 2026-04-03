@@ -361,6 +361,67 @@ def _build_tree(rows, total_items: int) -> dict:
     }
 
 
+# ── 重分类支持 ─────────────────────────────────────────────────────
+def get_all_entries_raw() -> list[dict]:
+    """获取所有条目原始数据（含 key_points），用于重分类"""
+    if USE_POSTGRES:
+        return _pg_get_all_entries_raw()
+    return _sqlite_get_all_entries_raw()
+
+
+def _pg_get_all_entries_raw() -> list[dict]:
+    with _pg_conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("""
+                SELECT e.id, e.title, e.summary, e.topic, e.dimension,
+                       e.content_form, e.url,
+                       COALESCE(array_agg(p.point ORDER BY p.id)
+                                FILTER (WHERE p.point IS NOT NULL), '{}') AS points
+                FROM kb_entries e
+                LEFT JOIN kb_points p ON p.entry_id = e.id
+                GROUP BY e.id
+                ORDER BY e.id
+            """)
+            return [dict(r) for r in cur.fetchall()]
+
+
+def _sqlite_get_all_entries_raw() -> list[dict]:
+    with _sqlite_conn() as conn:
+        entries = conn.execute(
+            "SELECT id, title, summary, topic, dimension, content_form, url FROM kb_entries ORDER BY id"
+        ).fetchall()
+        result = []
+        for e in entries:
+            pts = conn.execute(
+                "SELECT point FROM kb_points WHERE entry_id = ? ORDER BY id", (e["id"],)
+            ).fetchall()
+            result.append({
+                "id": e["id"], "title": e["title"], "summary": e["summary"],
+                "topic": e["topic"], "dimension": e["dimension"],
+                "content_form": e["content_form"] if "content_form" in e.keys() else "",
+                "url": e["url"],
+                "points": [p["point"] for p in pts],
+            })
+        return result
+
+
+def update_entry_classification(entry_id: int, topic: str, dimension: str, content_form: str):
+    """更新单条 entry 的分类字段"""
+    if USE_POSTGRES:
+        with _pg_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE kb_entries SET topic=%s, dimension=%s, content_form=%s WHERE id=%s",
+                    (topic, dimension, content_form, entry_id),
+                )
+    else:
+        with _sqlite_conn() as conn:
+            conn.execute(
+                "UPDATE kb_entries SET topic=?, dimension=?, content_form=? WHERE id=?",
+                (topic, dimension, content_form, entry_id),
+            )
+
+
 def get_stats() -> dict:
     if USE_POSTGRES:
         return _pg_get_stats()
